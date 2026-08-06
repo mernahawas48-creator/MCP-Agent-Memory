@@ -1,0 +1,122 @@
+[
+  {
+    "doc_id": "credit_hold_policy",
+    "title": "Credit Hold Classification and Release Policy",
+    "version": "1.0",
+    "effective_date": "2026-08-01",
+    "status": "active",
+    "department": "finance",
+    "document_type": "policy",
+    "access_roles": [
+      "sales_rep",
+      "finance_manager"
+    ],
+    "source_path": "documents/credit_hold_policy.md",
+    "section_prefix": "CH",
+    "keywords": [
+      "credit hold",
+      "minor",
+      "severe",
+      "release"
+    ]
+  },
+  {
+    "doc_id": "rate_exception_policy",
+    "title": "Rate Exception and Discount Authority Policy",
+    "version": "1.0",
+    "effective_date": "2026-08-01",
+    "status": "active",
+    "department": "finance",
+    "document_type": "policy",
+    "access_roles": [
+      "sales_rep",
+      "finance_manager"
+    ],
+    "source_path": "documents/rate_exception_policy.md",
+    "section_prefix": "RE",
+    "keywords": [
+      "discount",
+      "rate exception",
+      "approval"
+    ]
+  },
+  {
+    "doc_id": "portfolio_risk_guidelines",
+    "title": "Portfolio Credit Risk Guidelines",
+    "version": "1.0",
+    "effective_date": "2026-08-01",
+    "status": "active",
+    "department": "finance",
+    "document_type": "guideline",
+    "access_roles": [
+      "finance_manager"
+    ],
+    "source_path": "documents/portfolio_risk_guidelines.md",
+    "section_prefix": "PR",
+    "keywords": [
+      "portfolio",
+      "risk",
+      "balance ratio"
+    ]
+  },
+  {
+    "doc_id": "invoice_collection_sop",
+    "title": "Overdue Invoice Collection Procedure",
+    "version": "1.0",
+    "effective_date": "2026-08-01",
+    "status": "active",
+    "department": "finance",
+    "document_type": "sop",
+    "access_roles": [
+      "sales_rep",
+      "finance_manager"
+    ],
+    "source_path": "documents/invoice_collection_sop.md",
+    "section_prefix": "IC",
+    "keywords": [
+      "invoice",
+      "overdue",
+      "collection"
+    ]
+  },
+  {
+    "doc_id": "employee_access_policy",
+    "title": "Employee Access and Decision Authority Policy",
+    "version": "1.0",
+    "effective_date": "2026-08-01",
+    "status": "active",
+    "department": "security",
+    "document_type": "policy",
+    "access_roles": [
+      "sales_rep",
+      "finance_manager"
+    ],
+    "source_path": "documents/employee_access_policy.md",
+    "section_prefix": "AC",
+    "keywords": [
+      "role",
+      "authorization",
+      "session"
+    ]
+  },
+  {
+    "doc_id": "shipment_pricing_reference",
+    "title": "Shipment Pricing Reference",
+    "version": "1.0",
+    "effective_date": "2026-08-01",
+    "status": "active",
+    "department": "sales",
+    "document_type": "reference",
+    "access_roles": [
+      "sales_rep",
+      "finance_manager"
+    ],
+    "source_path": "documents/shipment_pricing_reference.md",
+    "section_prefix": "SP",
+    "keywords": [
+      "shipment",
+      "pricing",
+      "rate"
+    ]
+  }
+]
