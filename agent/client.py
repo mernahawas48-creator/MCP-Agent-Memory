@@ -41,7 +41,6 @@ API. If your installed SDK version names things slightly differently
 (message_handler vs. a subclassed session, etc.), the comments below flag
 the exact spots to adjust.
 """
-"""Capability-aware MCP client for the Swiftrail Logistics server."""
 
 from __future__ import annotations
 
@@ -55,7 +54,7 @@ from pathlib import Path
 from typing import Any
 
 from mcp import ClientSession, StdioServerParameters
-from mcp.client.session import ClientRequestContext as RequestContext
+from mcp.shared.context import RequestContext
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CreateMessageResult, ElicitResult, TextContent
@@ -108,13 +107,13 @@ class SwiftrailAgent:
 
         init_result = await self.session.initialize()
         self.server_capabilities = init_result.capabilities
-        self.server_info = init_result.server_info
+        self.server_info = init_result.serverInfo
 
         tools_capability = getattr(self.server_capabilities, "tools", None)
         print("=" * 68)
         print("HANDSHAKE COMPLETE")
         print(f"Server: {self.server_info.name}")
-        print(f"Protocol: {init_result.protocol_version}")
+        print(f"Protocol: {init_result.protocolVersion}")
         print(f"Tools capability: {tools_capability}")
         print(
             "tools.listChanged declared: "
@@ -187,7 +186,7 @@ class SwiftrailAgent:
         print("\n" + "!" * 68)
         print("SERVER PAUSED THE CALL: elicitation/create")
         print(params.message)
-        schema_props = (params.requested_schema or {}).get("properties", {})
+        schema_props = (params.requestedSchema or {}).get("properties", {})
         answers: dict[str, Any] = {}
         for field_name, field_schema in schema_props.items():
             description = field_schema.get("description", "")
@@ -267,12 +266,14 @@ async def _smoke_test():
     args = parser.parse_args()
 
     agent = SwiftrailAgent(args.transport, args.url)
-    await agent.connect()
-    tools = await agent.discover_tools()
-    print("\nDiscovered tools:")
-    for tool in tools:
-        print(f"- {tool.name}: {tool.description}")
-    await agent.close()
+    try:
+        await agent.connect()
+        tools = await agent.discover_tools()
+        print("\nDiscovered tools:")
+        for tool in tools:
+            print(f"- {tool.name}: {tool.description}")
+    finally:
+        await agent.close()
 
 
 if __name__ == "__main__":
