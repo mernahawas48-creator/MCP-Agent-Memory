@@ -1,0 +1,314 @@
+[
+  {
+    "case_id": "ch1-thresholds",
+    "query": "What are the overdue-age and credit-limit thresholds for minor and severe credit holds?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "CH-1"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ch2-minor-release",
+    "query": "After validating the record and current state, which roles may release an active minor hold?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "CH-2"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ch3-severe-release",
+    "query": "What authorization, confirmation, and note are required before committing a severe credit hold release?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "CH-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ch4-good-status",
+    "query": "When may a customer's credit status return to good?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "CH-4"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ac1-session-identity",
+    "query": "Why is a role typed by the user not trusted as authorization?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "AC-1"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ac2-sales-authority",
+    "query": "What records, discounts, and credit holds may an authenticated sales representative handle?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "AC-2"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ac3-finance-authority",
+    "query": "What may a finance manager review, and which high-risk writes still need human confirmation?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "AC-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ac4-handler-checks",
+    "query": "Why must a sensitive handler re-check the session, role, record, and state?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "AC-4"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ic1-current-delinquency",
+    "query": "Which invoice data comes from MySQL, and which overdue ages indicate minor or severe risk?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "IC-1"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ic2-follow-up-fields",
+    "query": "What invoice and customer information must an employee record during collection follow-up?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "IC-2"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "ic3-escalation",
+    "query": "Which severe-risk accounts, disputes, conflicting records, and discount requests must be escalated to finance?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "IC-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "pr1-risk-signals",
+    "query": "Which signals are considered during a portfolio credit risk review?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "PR-1"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "pr2-review-priority",
+    "query": "In what order should finance reviewers examine severe holds, minor holds, and high-exposure accounts?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "PR-2"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "pr3-decision-support",
+    "query": "Can a portfolio sweep automatically release a hold or approve an above-authority discount?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "PR-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "re1-delegated-limit",
+    "query": "What pending discount percentage may a sales representative or finance manager approve?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "RE-1"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "re2-above-authority",
+    "query": "What is required to approve or reject a discount above 15 percent?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "RE-2"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "re3-resolution",
+    "query": "Why must an already resolved rate exception not create another update?",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "RE-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "re4-independent-decisions",
+    "query": "Does approving a discount release a credit hold or change an overdue invoice?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "RE-4"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "sp1-rates",
+    "query": "What is the difference between the base rate and final rate, and where do current values come from?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "SP-1"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "sp2-rate-exception-link",
+    "query": "What does a shipment rate exception link, and which authority rules govern it?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "SP-2"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "sp3-pricing-sequence",
+    "query": "What sequence should be followed before writing a shipment pricing result through the defensive MCP tool?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "SP-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "sp4-pricing-hold",
+    "query": "Does shipment pricing approval remove a credit hold?",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "SP-4"
+    ],
+    "forbidden_section_ids": [],
+    "category": "semantic"
+  },
+  {
+    "case_id": "id-ch3",
+    "query": "CH-3",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "CH-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "exact_id"
+  },
+  {
+    "case_id": "id-re2",
+    "query": "RE-2",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "RE-2"
+    ],
+    "forbidden_section_ids": [],
+    "category": "exact_id"
+  },
+  {
+    "case_id": "id-ic3",
+    "query": "IC-3",
+    "role": "sales_rep",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "IC-3"
+    ],
+    "forbidden_section_ids": [],
+    "category": "exact_id"
+  },
+  {
+    "case_id": "id-ac4",
+    "query": "AC-4",
+    "role": "finance_manager",
+    "evaluation_type": "relevance",
+    "expected_section_ids": [
+      "AC-4"
+    ],
+    "forbidden_section_ids": [],
+    "category": "exact_id"
+  },
+  {
+    "case_id": "access-pr-signals-sales",
+    "query": "Which portfolio-wide risk signals should be reviewed?",
+    "role": "sales_rep",
+    "evaluation_type": "access_control",
+    "expected_section_ids": [],
+    "forbidden_section_ids": [
+      "PR-1",
+      "PR-2",
+      "PR-3"
+    ],
+    "category": "authorization"
+  },
+  {
+    "case_id": "access-pr-priority-sales",
+    "query": "Which severe holds should portfolio reviewers examine first?",
+    "role": "sales_rep",
+    "evaluation_type": "access_control",
+    "expected_section_ids": [],
+    "forbidden_section_ids": [
+      "PR-1",
+      "PR-2",
+      "PR-3"
+    ],
+    "category": "authorization"
+  }
+]
