@@ -11,6 +11,72 @@ This project extends the Swiftrail Logistics MCP agent with a structured Memory 
 The objective is to build an agent that can preserve relevant context across interactions, retrieve accurate domain knowledge efficiently, and avoid using unsupported or stale information in operational and financial workflows.
 
 
+## Memory System
+
+### Problem
+
+Swiftrail employees (sales reps and finance managers) work the same
+customers across many separate sessions. Two things go wrong without a
+memory layer:
+
+- **Nothing persists across sessions.** A sales rep who checked on a
+  customer yesterday has to re-explain the situation to the agent
+  today -- the agent has no way to recall that a credit hold was
+  placed, or that a rate exception was already rejected for a specific
+  reason.
+- **Nothing reconciles conflicting history.** A customer's standing
+  changes over time (a hold gets released, then a new one gets placed
+  months later). Without an explicit place these facts live and get
+  updated, the agent either repeats stale information or has no
+  record at all of which version is current.
+
+Both failures are costly in this domain: approving a shipment for a
+customer who is actually back on a severe credit hold, or re-approving
+a rate exception that was already rejected for cause, are real
+operational mistakes, not cosmetic ones.
+
+### Architecture
+
+```
+ShortTermBuffer  --overflow-->  PromoteDropRouter --(episodic only)--> EpisodicMemory
+Scratchpad (separate, survives pruning)                                     |
+                                                              ConsolidationLayer (periodic)
+                                                                              |
+                                                                      SemanticMemory
+```
+
+| Component | Role | Swiftrail example |
+|---|---|---|
+| `ShortTermBuffer` | Rolling window of recent conversation turns | Last N turns of a triage call |
+| `Scratchpad` | Current goal / sub-goal / working state, isolated from the buffer so pruning never destroys it | "Review open rate exceptions before approving shipment 512" survives even after the tool-call chatter that gathers each exception gets pruned |
+| `PromoteDropRouter` | Decides forget vs. episodic for each turn evicted from short-term memory, with a logged reason. Never writes to semantic memory. | A credit hold placement is promoted; "good morning" is forgotten |
+| `EpisodicMemory` | Durable, queryable-by-customer store of promoted events | "Credit hold placed on customer 12, severe, 90+ days overdue" |
+| `ConsolidationLayer` | Separate, periodic pass over episodic memory that derives/updates semantic facts (never triggered inline by the router) | Turns repeated credit-hold episodes into a current `customer_risk_level` fact |
+| `SemanticMemory` | Versioned, expiring facts with explicit conflict resolution | See conflict example below |
+
+### A real conflict, resolved
+
+1. Customer 12's credit hold is released → consolidation writes
+   `customer_risk_level = good_standing` (version 1, active).
+2. Weeks later, a new severe credit hold lands on the same customer
+   (90+ days overdue) → the next consolidation pass detects that this
+   contradicts the active fact.
+3. Resolution: version 1 is marked `superseded` (not deleted) and
+   points forward to version 2; version 2 (`high_risk`) becomes
+   active, with `conflict_reason = "Superseded version 1
+   ('good_standing' -> 'high_risk') based on episode 7."`
+4. `fact_history()` still returns both versions, so the full timeline
+   of the customer's risk status is auditable, not overwritten.
+
+This is exercised end-to-end in `memory/demo_memory.py` and asserted in
+`memory/test_consolidation.py::test_consolidation_resolves_a_real_conflict_across_two_runs`.
+
+Facts also expire on a TTL if nothing reaffirms them (`expire_stale_facts`),
+so a semantic fact that stops being reinforced by new episodes ages out
+rather than staying authoritative forever.
+
+See `memory/README.md` for exactly where each concern lives in the code.
+
 ## RAG Architecture Evaluation
 
 Three RAG architectures were evaluated on the same fixed set of 10
