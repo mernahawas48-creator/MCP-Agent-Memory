@@ -1,0 +1,241 @@
+[
+  {
+    "case_id": "semantic-severe-release",
+    "category": "naive_friendly",
+    "query": "Who can release a severe credit hold, and what is required before the release is committed?",
+    "role": "finance_manager",
+    "top_k": 3,
+    "expected_section_ids": [
+      "CH-3"
+    ],
+    "required_term_groups": [
+      [
+        "finance manager"
+      ],
+      [
+        "human confirmation"
+      ],
+      [
+        "authorization note"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "semantic-hold-thresholds",
+    "category": "naive_friendly",
+    "query": "When is a credit hold minor and when is it severe?",
+    "role": "finance_manager",
+    "top_k": 3,
+    "expected_section_ids": [
+      "CH-1"
+    ],
+    "required_term_groups": [
+      [
+        "30 to 89",
+        "30-89"
+      ],
+      [
+        "90"
+      ],
+      [
+        "25 percent",
+        "25%"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "semantic-invoice-followup",
+    "category": "naive_friendly",
+    "query": "What information should an employee record during overdue invoice follow-up?",
+    "role": "sales_rep",
+    "top_k": 3,
+    "expected_section_ids": [
+      "IC-2"
+    ],
+    "required_term_groups": [
+      [
+        "invoice id"
+      ],
+      [
+        "customer id"
+      ],
+      [
+        "due date"
+      ],
+      [
+        "next action"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "exact-re2",
+    "category": "hybrid_friendly",
+    "query": "RE-2",
+    "role": "finance_manager",
+    "top_k": 3,
+    "expected_section_ids": [
+      "RE-2"
+    ],
+    "required_term_groups": [
+      [
+        "15 percent",
+        "15%"
+      ],
+      [
+        "finance manager"
+      ],
+      [
+        "human approval",
+        "approval or rejection"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "exact-ac4",
+    "category": "hybrid_friendly",
+    "query": "AC-4",
+    "role": "finance_manager",
+    "top_k": 3,
+    "expected_section_ids": [
+      "AC-4"
+    ],
+    "required_term_groups": [
+      [
+        "session"
+      ],
+      [
+        "role"
+      ],
+      [
+        "record"
+      ],
+      [
+        "state"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "exact-sp3",
+    "category": "hybrid_friendly",
+    "query": "SP-3",
+    "role": "sales_rep",
+    "top_k": 3,
+    "expected_section_ids": [
+      "SP-3"
+    ],
+    "required_term_groups": [
+      [
+        "shipment"
+      ],
+      [
+        "pending request"
+      ],
+      [
+        "verify the role",
+        "verify role"
+      ],
+      [
+        "mcp tool"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "multi-part-discount-and-hold",
+    "category": "agentic_friendly",
+    "query": "An 18 percent discount is requested for a customer with a severe credit hold. Who must approve the discount, who may release the hold, and does discount approval release the hold?",
+    "role": "finance_manager",
+    "top_k": 2,
+    "expected_section_ids": [
+      "RE-2",
+      "CH-3",
+      "RE-4"
+    ],
+    "required_term_groups": [
+      [
+        "finance manager"
+      ],
+      [
+        "human approval",
+        "approval or rejection"
+      ],
+      [
+        "human confirmation"
+      ],
+      [
+        "does not release",
+        "doesn't release",
+        "separate workflow",
+        "separate workflows"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "multi-part-pricing-and-hold",
+    "category": "agentic_friendly",
+    "query": "A shipment receives an authorized pricing adjustment while the customer still has an active credit hold. Does pricing approval remove the hold, and what must happen before a severe hold can be released?",
+    "role": "finance_manager",
+    "top_k": 2,
+    "expected_section_ids": [
+      "SP-4",
+      "CH-3"
+    ],
+    "required_term_groups": [
+      [
+        "does not remove",
+        "doesn't remove",
+        "not remove"
+      ],
+      [
+        "finance manager"
+      ],
+      [
+        "human confirmation"
+      ],
+      [
+        "authorization note"
+      ]
+    ],
+    "expected_abstain": false,
+    "forbidden_section_ids": []
+  },
+  {
+    "case_id": "unauthorized-pr2",
+    "category": "authorization",
+    "query": "PR-2",
+    "role": "sales_rep",
+    "top_k": 3,
+    "expected_section_ids": [],
+    "required_term_groups": [],
+    "expected_abstain": true,
+    "forbidden_section_ids": [
+      "PR-1",
+      "PR-2",
+      "PR-3"
+    ]
+  },
+  {
+    "case_id": "unsupported-storage-fee",
+    "category": "safe_abstention",
+    "query": "What is Swiftrail's overnight warehouse storage fee per pallet?",
+    "role": "sales_rep",
+    "top_k": 3,
+    "expected_section_ids": [],
+    "required_term_groups": [],
+    "expected_abstain": true,
+    "forbidden_section_ids": []
+  }
+]
