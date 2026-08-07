@@ -6,8 +6,13 @@ import pytest
 
 from retrieval_eval.evaluate_architectures import (
     EvaluationCase,
+    DailyQuotaExhausted,
     _answer_with_transient_retry,
+    _dataset_signature,
+    _is_daily_quota_exhausted,
     _is_transient_503,
+    _load_checkpoint,
+    _save_checkpoint,
     score_answer,
 )
 
@@ -150,4 +155,81 @@ def test_non_503_error_is_not_hidden():
             max_api_retries=3,
             initial_retry_delay=0.0,
         )
+
+class _Daily429(Exception):
+    status_code = 429
+
+
+def test_daily_quota_is_detected_and_not_retried():
+    exc = _Daily429(
+        "429 RESOURCE_EXHAUSTED quotaId="
+        "GenerateRequestsPerDayPerProjectPerModel-FreeTier "
+        "free_tier_requests"
+    )
+
+    assert _is_daily_quota_exhausted(exc)
+
+    class QuotaPipeline:
+        def __init__(self):
+            self.calls = 0
+
+        def answer(self, query, *, role, top_k):
+            self.calls += 1
+            raise exc
+
+    pipeline = QuotaPipeline()
+
+    with pytest.raises(DailyQuotaExhausted):
+        _answer_with_transient_retry(
+            pipeline=pipeline,
+            generator=_UsageGenerator(),
+            case=_case(),
+            max_api_retries=5,
+            initial_retry_delay=0.0,
+        )
+
+    assert pipeline.calls == 1
+
+
+def test_checkpoint_round_trip(tmp_path):
+    case = _case()
+    signature = _dataset_signature((case,))
+    path = tmp_path / "checkpoint.json"
+
+    from retrieval_eval.evaluate_architectures import CaseResult
+
+    result = CaseResult(
+        architecture="Naive RAG",
+        case_id=case.case_id,
+        category=case.category,
+        correct=True,
+        query=case.query,
+        role=case.role,
+        answer="grounded answer",
+        source_section_ids=("CH-3",),
+        verification_passed=True,
+        input_tokens=10,
+        output_tokens=5,
+        total_tokens=15,
+        latency_seconds=0.5,
+        retrieval_attempts=1,
+        transient_api_retries=0,
+        retry_wait_seconds=0.0,
+        reason="Passed.",
+    )
+
+    _save_checkpoint(
+        path,
+        dataset_signature=signature,
+        model_name="gemini-test",
+        results=[result],
+    )
+
+    loaded_signature, model_name, results = (
+        _load_checkpoint(path)
+    )
+
+    assert loaded_signature == signature
+    assert model_name == "gemini-test"
+    assert results == [result]
 

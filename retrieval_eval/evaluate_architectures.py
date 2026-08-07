@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -24,6 +25,11 @@ DEFAULT_RESULTS_DIR = (
     Path(__file__).resolve().parent / "results"
 )
 SAFE_PREFIX = "i could not find enough authorized"
+
+
+class DailyQuotaExhausted(RuntimeError):
+    """Raised when the model's requests-per-day quota is exhausted."""
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,12 +162,18 @@ def run_comparison(
     max_api_retries: int = 5,
     initial_retry_delay: float = 5.0,
     inter_case_delay: float = 1.5,
+    checkpoint_path: str | Path | None = None,
+    resume: bool = True,
 ) -> ComparisonReport:
     """Run every architecture against every fixed test question.
 
     Transient Gemini 503 errors are retried without changing the fixed
     questions or the architecture configuration. Retry waiting time is
     recorded separately and is not included in the per-query latency metric.
+
+    Completed architecture/case pairs can be checkpointed after every
+    successful case. If the daily Gemini quota is exhausted, a later run can
+    resume from the checkpoint without repeating completed model calls.
     """
 
     if max_api_retries < 0:
@@ -173,8 +185,49 @@ def run_comparison(
     if inter_case_delay < 0:
         raise ValueError("inter_case_delay cannot be negative.")
 
+    resolved_checkpoint = (
+        Path(checkpoint_path)
+        if checkpoint_path is not None
+        else None
+    )
+    dataset_signature = _dataset_signature(cases)
+
     all_results: list[CaseResult] = []
     model_name = "unknown"
+
+    if (
+        resume
+        and resolved_checkpoint is not None
+        and resolved_checkpoint.exists()
+    ):
+        (
+            checkpoint_signature,
+            checkpoint_model,
+            checkpoint_results,
+        ) = _load_checkpoint(
+            resolved_checkpoint
+        )
+
+        if checkpoint_signature != dataset_signature:
+            raise ValueError(
+                "The saved evaluation checkpoint was created from a "
+                "different questions dataset. Do not change questions.json "
+                "between architecture runs."
+            )
+
+        all_results.extend(checkpoint_results)
+        model_name = checkpoint_model
+
+        print(
+            f"Resuming from checkpoint: "
+            f"{len(all_results)} completed architecture/case runs.",
+            flush=True,
+        )
+
+    completed_keys = {
+        (item.architecture, item.case_id)
+        for item in all_results
+    }
 
     for architecture_name, pipeline in architectures:
         _warm_embedding(pipeline)
@@ -184,7 +237,7 @@ def run_comparison(
             "generator",
             None,
         )
-        model_name = str(
+        current_model_name = str(
             getattr(
                 generator,
                 "model_name",
@@ -192,7 +245,32 @@ def run_comparison(
             )
         )
 
+        if (
+            model_name != "unknown"
+            and current_model_name != "unknown"
+            and model_name != current_model_name
+        ):
+            raise ValueError(
+                "The saved checkpoint uses model "
+                f"'{model_name}', but the current run uses "
+                f"'{current_model_name}'. Keep the same model for a fair "
+                "architecture comparison."
+            )
+
+        model_name = current_model_name
+
         for case_index, case in enumerate(cases, start=1):
+            key = (architecture_name, case.case_id)
+
+            if key in completed_keys:
+                print(
+                    f"[{architecture_name}] "
+                    f"{case_index}/{len(cases)} "
+                    f"{case.case_id} -- already completed, skipping",
+                    flush=True,
+                )
+                continue
+
             print(
                 f"[{architecture_name}] "
                 f"{case_index}/{len(cases)} "
@@ -228,45 +306,53 @@ def run_comparison(
                 verification_passed,
             )
 
-            all_results.append(
-                CaseResult(
-                    architecture=architecture_name,
-                    case_id=case.case_id,
-                    category=case.category,
-                    correct=correct,
-                    query=case.query,
-                    role=case.role,
-                    answer=response.answer,
-                    source_section_ids=source_sections,
-                    verification_passed=(
-                        verification_passed
-                    ),
-                    input_tokens=(
-                        usage.input_tokens
-                    ),
-                    output_tokens=(
-                        usage.output_tokens
-                    ),
-                    total_tokens=(
-                        usage.total_tokens
-                    ),
-                    latency_seconds=latency,
-                    retrieval_attempts=int(
-                        getattr(
-                            response,
-                            "attempts",
-                            1,
-                        )
-                    ),
-                    transient_api_retries=(
-                        transient_api_retries
-                    ),
-                    retry_wait_seconds=(
-                        retry_wait_seconds
-                    ),
-                    reason=reason,
-                )
+            result = CaseResult(
+                architecture=architecture_name,
+                case_id=case.case_id,
+                category=case.category,
+                correct=correct,
+                query=case.query,
+                role=case.role,
+                answer=response.answer,
+                source_section_ids=source_sections,
+                verification_passed=(
+                    verification_passed
+                ),
+                input_tokens=(
+                    usage.input_tokens
+                ),
+                output_tokens=(
+                    usage.output_tokens
+                ),
+                total_tokens=(
+                    usage.total_tokens
+                ),
+                latency_seconds=latency,
+                retrieval_attempts=int(
+                    getattr(
+                        response,
+                        "attempts",
+                        1,
+                    )
+                ),
+                transient_api_retries=(
+                    transient_api_retries
+                ),
+                retry_wait_seconds=(
+                    retry_wait_seconds
+                ),
+                reason=reason,
             )
+            all_results.append(result)
+            completed_keys.add(key)
+
+            if resolved_checkpoint is not None:
+                _save_checkpoint(
+                    resolved_checkpoint,
+                    dataset_signature=dataset_signature,
+                    model_name=model_name,
+                    results=all_results,
+                )
 
             if (
                 inter_case_delay > 0
@@ -287,12 +373,20 @@ def run_comparison(
         for architecture_name, _ in architectures
     )
 
-    return ComparisonReport(
+    report = ComparisonReport(
         model_name=model_name,
         case_count=len(cases),
         summaries=summaries,
         cases=tuple(all_results),
     )
+
+    if (
+        resolved_checkpoint is not None
+        and resolved_checkpoint.exists()
+    ):
+        resolved_checkpoint.unlink()
+
+    return report
 
 
 
@@ -333,15 +427,24 @@ def _answer_with_transient_retry(
                 total_wait,
             )
         except Exception as exc:
-            if not _is_transient_503(exc):
+            if _is_daily_quota_exhausted(exc):
+                raise DailyQuotaExhausted(
+                    "Gemini requests-per-day quota is exhausted for the "
+                    f"current model while running case '{case.case_id}'."
+                ) from exc
+
+            if not (
+                _is_transient_503(exc)
+                or _is_transient_429(exc)
+            ):
                 raise
 
             if retry_count >= max_api_retries:
                 raise RuntimeError(
-                    "Gemini remained unavailable after "
-                    f"{max_api_retries} transient retries "
-                    f"for case '{case.case_id}'. "
-                    "The fixed evaluation dataset was not changed."
+                    "Gemini remained temporarily unavailable after "
+                    f"{max_api_retries} retries for case "
+                    f"'{case.case_id}'. The fixed evaluation dataset was "
+                    "not changed."
                 ) from exc
 
             delay = initial_retry_delay * (2 ** retry_count)
@@ -349,7 +452,7 @@ def _answer_with_transient_retry(
             total_wait += delay
 
             print(
-                "  Gemini returned transient 503 UNAVAILABLE. "
+                "  Gemini returned a transient API limit/service error. "
                 f"Retry {retry_count}/{max_api_retries} "
                 f"in {delay:.1f}s...",
                 flush=True,
@@ -385,6 +488,158 @@ def _is_transient_503(exc: Exception) -> bool:
     return (
         "503" in message
         and "UNAVAILABLE" in message
+    )
+
+
+
+def _is_daily_quota_exhausted(exc: Exception) -> bool:
+    """Detect requests-per-day quota exhaustion separately from transient 429."""
+
+    message = str(exc).lower()
+
+    return (
+        "429" in message
+        and "resource_exhausted" in message
+        and (
+            "requestsperday" in message
+            or "perdayperprojectpermodel" in message
+            or "free_tier_requests" in message
+            or "requests per day" in message
+        )
+    )
+
+
+def _is_transient_429(exc: Exception) -> bool:
+    """Treat non-daily 429 errors as retryable rate limits."""
+
+    message = str(exc).upper()
+
+    return (
+        "429" in message
+        and "RESOURCE_EXHAUSTED" in message
+        and not _is_daily_quota_exhausted(exc)
+    )
+
+
+def _dataset_signature(
+    cases: Sequence[EvaluationCase],
+) -> str:
+    """Hash the fixed case definitions so a resumed run cannot change them."""
+
+    payload = [
+        asdict(case)
+        for case in cases
+    ]
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def _save_checkpoint(
+    path: Path,
+    *,
+    dataset_signature: str,
+    model_name: str,
+    results: Sequence[CaseResult],
+) -> None:
+    """Persist completed case results atomically after every successful case."""
+
+    path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    payload = {
+        "dataset_signature": dataset_signature,
+        "model_name": model_name,
+        "results": [
+            asdict(item)
+            for item in results
+        ],
+    }
+
+    temporary = path.with_suffix(
+        path.suffix + ".tmp"
+    )
+    temporary.write_text(
+        json.dumps(
+            payload,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
+def _load_checkpoint(
+    path: Path,
+) -> tuple[
+    str,
+    str,
+    list[CaseResult],
+]:
+    """Load completed results from a previous quota-interrupted run."""
+
+    payload = json.loads(
+        path.read_text(
+            encoding="utf-8"
+        )
+    )
+
+    results = [
+        CaseResult(
+            architecture=str(item["architecture"]),
+            case_id=str(item["case_id"]),
+            category=str(item["category"]),
+            correct=bool(item["correct"]),
+            query=str(item["query"]),
+            role=str(item["role"]),
+            answer=str(item["answer"]),
+            source_section_ids=tuple(
+                str(value)
+                for value in item["source_section_ids"]
+            ),
+            verification_passed=bool(
+                item["verification_passed"]
+            ),
+            input_tokens=int(item["input_tokens"]),
+            output_tokens=int(item["output_tokens"]),
+            total_tokens=int(item["total_tokens"]),
+            latency_seconds=float(
+                item["latency_seconds"]
+            ),
+            retrieval_attempts=int(
+                item["retrieval_attempts"]
+            ),
+            transient_api_retries=int(
+                item.get(
+                    "transient_api_retries",
+                    0,
+                )
+            ),
+            retry_wait_seconds=float(
+                item.get(
+                    "retry_wait_seconds",
+                    0.0,
+                )
+            ),
+            reason=str(item["reason"]),
+        )
+        for item in payload.get(
+            "results",
+            []
+        )
+    ]
+
+    return (
+        str(payload["dataset_signature"]),
+        str(payload.get("model_name", "unknown")),
+        results,
     )
 
 
@@ -741,6 +996,22 @@ def main() -> None:
             "This pause is excluded from latency metrics."
         ),
     )
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help=(
+            "Checkpoint path. Defaults to a hidden JSON file inside "
+            "the output directory."
+        ),
+    )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        help=(
+            "Ignore any saved checkpoint and restart the comparison."
+        ),
+    )
     args = parser.parse_args()
 
     cases = load_cases(args.questions)
@@ -754,13 +1025,38 @@ def main() -> None:
         "Do not edit questions.json between architecture runs."
     )
 
-    report = run_comparison(
-        cases=cases,
-        architectures=build_architectures(),
-        max_api_retries=args.max_api_retries,
-        initial_retry_delay=args.retry_delay,
-        inter_case_delay=args.inter_case_delay,
+    checkpoint_path = (
+        args.checkpoint
+        if args.checkpoint is not None
+        else (
+            args.output_dir
+            / ".architecture_comparison_checkpoint.json"
+        )
     )
+
+    try:
+        report = run_comparison(
+            cases=cases,
+            architectures=build_architectures(),
+            max_api_retries=args.max_api_retries,
+            initial_retry_delay=args.retry_delay,
+            inter_case_delay=args.inter_case_delay,
+            checkpoint_path=checkpoint_path,
+            resume=not args.no_resume,
+        )
+    except DailyQuotaExhausted as exc:
+        print("\nEvaluation paused because the daily Gemini quota was reached.")
+        print(str(exc))
+        print(
+            "Completed results were saved to: "
+            f"{checkpoint_path}"
+        )
+        print(
+            "After the quota resets, run the same command again. "
+            "Completed architecture/case pairs will be skipped automatically."
+        )
+        return
+
     json_path, markdown_path = write_report(
         report,
         args.output_dir,
