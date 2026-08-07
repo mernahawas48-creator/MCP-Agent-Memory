@@ -55,6 +55,8 @@ class CaseResult:
     total_tokens: int
     latency_seconds: float
     retrieval_attempts: int
+    transient_api_retries: int
+    retry_wait_seconds: float
     reason: str
 
 
@@ -70,6 +72,7 @@ class ArchitectureSummary:
     avg_latency_seconds_per_query: float
     safe_abstentions: int
     avg_retrieval_attempts: float
+    total_transient_api_retries: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,8 +153,25 @@ def run_comparison(
     *,
     cases: Sequence[EvaluationCase],
     architectures: Sequence[tuple[str, Any]],
+    max_api_retries: int = 5,
+    initial_retry_delay: float = 5.0,
+    inter_case_delay: float = 1.5,
 ) -> ComparisonReport:
-    """Run every architecture against every fixed test question."""
+    """Run every architecture against every fixed test question.
+
+    Transient Gemini 503 errors are retried without changing the fixed
+    questions or the architecture configuration. Retry waiting time is
+    recorded separately and is not included in the per-query latency metric.
+    """
+
+    if max_api_retries < 0:
+        raise ValueError("max_api_retries cannot be negative.")
+
+    if initial_retry_delay < 0:
+        raise ValueError("initial_retry_delay cannot be negative.")
+
+    if inter_case_delay < 0:
+        raise ValueError("inter_case_delay cannot be negative.")
 
     all_results: list[CaseResult] = []
     model_name = "unknown"
@@ -172,17 +192,25 @@ def run_comparison(
             )
         )
 
-        for case in cases:
-            _reset_usage(generator)
-
-            started = time.perf_counter()
-            response = pipeline.answer(
-                case.query,
-                role=case.role,
-                top_k=case.top_k,
+        for case_index, case in enumerate(cases, start=1):
+            print(
+                f"[{architecture_name}] "
+                f"{case_index}/{len(cases)} "
+                f"{case.case_id}",
+                flush=True,
             )
-            latency = (
-                time.perf_counter() - started
+
+            (
+                response,
+                latency,
+                transient_api_retries,
+                retry_wait_seconds,
+            ) = _answer_with_transient_retry(
+                pipeline=pipeline,
+                generator=generator,
+                case=case,
+                max_api_retries=max_api_retries,
+                initial_retry_delay=initial_retry_delay,
             )
 
             usage = _usage(generator)
@@ -230,9 +258,21 @@ def run_comparison(
                             1,
                         )
                     ),
+                    transient_api_retries=(
+                        transient_api_retries
+                    ),
+                    retry_wait_seconds=(
+                        retry_wait_seconds
+                    ),
                     reason=reason,
                 )
             )
+
+            if (
+                inter_case_delay > 0
+                and case_index < len(cases)
+            ):
+                time.sleep(inter_case_delay)
 
     summaries = tuple(
         _summarize(
@@ -252,6 +292,99 @@ def run_comparison(
         case_count=len(cases),
         summaries=summaries,
         cases=tuple(all_results),
+    )
+
+
+
+def _answer_with_transient_retry(
+    *,
+    pipeline: Any,
+    generator: Any,
+    case: EvaluationCase,
+    max_api_retries: int,
+    initial_retry_delay: float,
+) -> tuple[Any, float, int, float]:
+    """Execute one case and retry only transient Gemini 503 failures.
+
+    The returned latency measures the successful pipeline attempt. Deliberate
+    retry waiting is tracked separately so service congestion does not inflate
+    the architecture latency comparison.
+    """
+
+    retry_count = 0
+    total_wait = 0.0
+
+    while True:
+        _reset_usage(generator)
+        started = time.perf_counter()
+
+        try:
+            response = pipeline.answer(
+                case.query,
+                role=case.role,
+                top_k=case.top_k,
+            )
+            latency = time.perf_counter() - started
+
+            return (
+                response,
+                latency,
+                retry_count,
+                total_wait,
+            )
+        except Exception as exc:
+            if not _is_transient_503(exc):
+                raise
+
+            if retry_count >= max_api_retries:
+                raise RuntimeError(
+                    "Gemini remained unavailable after "
+                    f"{max_api_retries} transient retries "
+                    f"for case '{case.case_id}'. "
+                    "The fixed evaluation dataset was not changed."
+                ) from exc
+
+            delay = initial_retry_delay * (2 ** retry_count)
+            retry_count += 1
+            total_wait += delay
+
+            print(
+                "  Gemini returned transient 503 UNAVAILABLE. "
+                f"Retry {retry_count}/{max_api_retries} "
+                f"in {delay:.1f}s...",
+                flush=True,
+            )
+
+            if delay > 0:
+                time.sleep(delay)
+
+
+def _is_transient_503(exc: Exception) -> bool:
+    """Recognize Gemini service-unavailable errors without hiding other errors."""
+
+    status_code = getattr(
+        exc,
+        "status_code",
+        None,
+    )
+
+    if status_code == 503:
+        return True
+
+    code = getattr(
+        exc,
+        "code",
+        None,
+    )
+
+    if code == 503:
+        return True
+
+    message = str(exc).upper()
+
+    return (
+        "503" in message
+        and "UNAVAILABLE" in message
     )
 
 
@@ -410,6 +543,10 @@ def _summarize(
                 for item in results
             ]
         ),
+        total_transient_api_retries=sum(
+            item.transient_api_retries
+            for item in results
+        ),
     )
 
 
@@ -513,8 +650,8 @@ def _markdown(
         f"Model: `{report.model_name}`",
         f"Fixed test cases: {report.case_count}",
         "",
-        "| Architecture | Correct / Total | Accuracy | Avg. input tokens/query | Avg. output tokens/query | Avg. total tokens/query | Avg. latency/query | Avg. retrieval attempts | Safe abstentions |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Architecture | Correct / Total | Accuracy | Avg. input tokens/query | Avg. output tokens/query | Avg. total tokens/query | Avg. latency/query | Avg. retrieval attempts | Safe abstentions | Transient API retries |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
 
     for summary in report.summaries:
@@ -528,7 +665,8 @@ def _markdown(
             f"{summary.avg_total_tokens_per_query:.1f} | "
             f"{summary.avg_latency_seconds_per_query:.3f}s | "
             f"{summary.avg_retrieval_attempts:.2f} | "
-            f"{summary.safe_abstentions} |"
+            f"{summary.safe_abstentions} | "
+            f"{summary.total_transient_api_retries} |"
         )
 
     lines.extend(
@@ -536,8 +674,8 @@ def _markdown(
             "",
             "## Per-case results",
             "",
-            "| Architecture | Case | Category | Correct | Sources | Verification | Attempts | Latency | Reason |",
-            "|---|---|---|---|---|---|---:|---:|---|",
+            "| Architecture | Case | Category | Correct | Sources | Verification | Attempts | API retries | Latency | Reason |",
+            "|---|---|---|---|---|---|---:|---:|---:|---|",
         ]
     )
 
@@ -551,6 +689,7 @@ def _markdown(
             f"{', '.join(item.source_section_ids) or '-'} | "
             f"{'pass' if item.verification_passed else 'fail'} | "
             f"{item.retrieval_attempts} | "
+            f"{item.transient_api_retries} | "
             f"{item.latency_seconds:.3f}s | "
             f"{item.reason.replace('|', '/')} |"
         )
@@ -575,6 +714,33 @@ def main() -> None:
         type=Path,
         default=DEFAULT_RESULTS_DIR,
     )
+    parser.add_argument(
+        "--max-api-retries",
+        type=int,
+        default=5,
+        help=(
+            "Retries for transient Gemini 503 UNAVAILABLE errors "
+            "per evaluation case."
+        ),
+    )
+    parser.add_argument(
+        "--retry-delay",
+        type=float,
+        default=5.0,
+        help=(
+            "Initial retry delay in seconds. Each retry doubles "
+            "the previous delay."
+        ),
+    )
+    parser.add_argument(
+        "--inter-case-delay",
+        type=float,
+        default=1.5,
+        help=(
+            "Pause between fixed cases to reduce burst pressure. "
+            "This pause is excluded from latency metrics."
+        ),
+    )
     args = parser.parse_args()
 
     cases = load_cases(args.questions)
@@ -591,6 +757,9 @@ def main() -> None:
     report = run_comparison(
         cases=cases,
         architectures=build_architectures(),
+        max_api_retries=args.max_api_retries,
+        initial_retry_delay=args.retry_delay,
+        inter_case_delay=args.inter_case_delay,
     )
     json_path, markdown_path = write_report(
         report,
@@ -605,7 +774,8 @@ def main() -> None:
             f"({summary.accuracy:.1%}), "
             f"avg tokens={summary.avg_total_tokens_per_query:.1f}, "
             f"avg latency={summary.avg_latency_seconds_per_query:.3f}s, "
-            f"avg attempts={summary.avg_retrieval_attempts:.2f}"
+            f"avg attempts={summary.avg_retrieval_attempts:.2f}, "
+            f"503 retries={summary.total_transient_api_retries}"
         )
 
     print(f"\nJSON: {json_path}")
