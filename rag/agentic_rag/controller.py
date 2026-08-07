@@ -17,6 +17,9 @@ from rag.naive_rag.generator import (
     GeminiTextGenerator,
     TextGenerator,
 )
+from rag.verification.verifier import (
+    SelfRAGVerifier,
+)
 
 
 SECTION_ID_PATTERN = re.compile(
@@ -257,10 +260,31 @@ class KeywordEvidenceGrader:
             / len(query_terms)
         )
 
+        multi_part = (
+            " and " in normalized_query.lower()
+            or ";" in normalized_query
+            or normalized_query.count("?") > 1
+        )
+        required_coverage = (
+            max(self.minimum_coverage, 0.65)
+            if multi_part
+            else self.minimum_coverage
+        )
+
+        broad_multi_part = (
+            multi_part
+            and len(query_terms) >= 8
+        )
+        enough_evidence = (
+            len(results) >= 3
+            if broad_multi_part
+            else True
+        )
+
         sufficient = (
-            len(matched_terms)
-            >= self.minimum_matches
-            or coverage >= self.minimum_coverage
+            enough_evidence
+            and len(matched_terms) >= self.minimum_matches
+            and coverage >= required_coverage
         )
 
         if sufficient:
@@ -415,6 +439,7 @@ class AgenticRAG:
         planner: Planner | None = None,
         grader: Grader | None = None,
         rewriter: Rewriter | None = None,
+        verifier: SelfRAGVerifier | None = None,
         max_attempts: int = 2,
     ):
         if max_attempts < 1:
@@ -441,6 +466,9 @@ class AgenticRAG:
         )
         self.rewriter = (
             rewriter or CorpusQueryRewriter()
+        )
+        self.verifier = (
+            verifier or SelfRAGVerifier()
         )
         self.max_attempts = max_attempts
 
@@ -609,6 +637,47 @@ class AgenticRAG:
                 final_retrieval_query=retrieval_query,
                 model_name=self._model_name(),
                 trace=tuple(trace),
+                verification_passed=False,
+                verification_reason=final_assessment.reason,
+            )
+
+        relevance = self.verifier.check_relevance(
+            original_query,
+            final_results,
+        )
+        trace.append(
+            AgentTraceStep(
+                step=step_number,
+                action="verify_retrieval",
+                details={
+                    "passed": relevance.passed,
+                    "reason": relevance.reason,
+                },
+            )
+        )
+        step_number += 1
+
+        if not relevance.passed:
+            trace.append(
+                AgentTraceStep(
+                    step=step_number,
+                    action="stop",
+                    details={
+                        "reason": relevance.reason,
+                        "generated_answer": False,
+                    },
+                )
+            )
+            return AgenticRAGAnswer(
+                query=original_query,
+                answer=SAFE_NO_EVIDENCE_ANSWER,
+                sources=sources,
+                attempts=attempts_used,
+                final_retrieval_query=retrieval_query,
+                model_name=self._model_name(),
+                trace=tuple(trace),
+                verification_passed=False,
+                verification_reason=relevance.reason,
             )
 
         prompt = self._build_prompt(
@@ -638,6 +707,25 @@ class AgenticRAG:
                 },
             )
         )
+        step_number += 1
+
+        support = self.verifier.check_support(
+            answer,
+            final_results,
+        )
+        trace.append(
+            AgentTraceStep(
+                step=step_number,
+                action="verify_answer",
+                details={
+                    "passed": support.passed,
+                    "reason": support.reason,
+                },
+            )
+        )
+
+        if not support.passed:
+            answer = SAFE_NO_EVIDENCE_ANSWER
 
         return AgenticRAGAnswer(
             query=original_query,
@@ -647,6 +735,8 @@ class AgenticRAG:
             final_retrieval_query=retrieval_query,
             model_name=self._model_name(),
             trace=tuple(trace),
+            verification_passed=support.passed,
+            verification_reason=support.reason,
         )
 
     def _model_name(self) -> str:

@@ -130,7 +130,9 @@ def test_agent_answers_after_one_sufficient_retrieval():
         "plan",
         "retrieve",
         "grade_evidence",
+        "verify_retrieval",
         "generate_answer",
+        "verify_answer",
     ]
 
 

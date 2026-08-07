@@ -1,10 +1,11 @@
-"""Text generation adapters used by the Naive RAG pipeline."""
+"""Text generation adapters used by the RAG pipelines."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
-from typing import Protocol
 from pathlib import Path
+from typing import Protocol
 
 try:
     from dotenv import load_dotenv
@@ -22,15 +23,24 @@ DEFAULT_GEMINI_MODEL = os.getenv(
 )
 
 
+@dataclass(frozen=True, slots=True)
+class GenerationUsage:
+    """Token usage reported by one model generation call."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+
+
 class TextGenerator(Protocol):
-    """Minimal interface required by the RAG pipeline."""
+    """Minimal interface required by the RAG pipelines."""
 
     def generate(self, prompt: str) -> str:
         ...
 
 
 class GeminiTextGenerator:
-    """Generate grounded answers with the Google Gen AI SDK."""
+    """Generate grounded answers and retain API-reported token usage."""
 
     def __init__(
         self,
@@ -49,6 +59,7 @@ class GeminiTextGenerator:
         self.model_name = model_name
         self.temperature = temperature
         self._client = client
+        self._usage_history: list[GenerationUsage] = []
 
     @property
     def client(self):
@@ -75,11 +86,45 @@ class GeminiTextGenerator:
 
         return self._client
 
+    @property
+    def last_usage(self) -> GenerationUsage:
+        """Return usage for the most recent generation."""
+
+        if not self._usage_history:
+            return GenerationUsage()
+        return self._usage_history[-1]
+
+    @property
+    def usage_totals(self) -> GenerationUsage:
+        """Return cumulative usage since the last reset."""
+
+        return GenerationUsage(
+            input_tokens=sum(
+                item.input_tokens
+                for item in self._usage_history
+            ),
+            output_tokens=sum(
+                item.output_tokens
+                for item in self._usage_history
+            ),
+            total_tokens=sum(
+                item.total_tokens
+                for item in self._usage_history
+            ),
+        )
+
+    def reset_usage(self) -> None:
+        """Clear accumulated usage before an evaluation run."""
+
+        self._usage_history.clear()
+
     def generate(self, prompt: str) -> str:
         normalized_prompt = prompt.strip()
 
         if not normalized_prompt:
-            raise ValueError("The generation prompt cannot be empty.")
+            raise ValueError(
+                "The generation prompt cannot be empty."
+            )
 
         try:
             from google.genai import types
@@ -96,6 +141,10 @@ class GeminiTextGenerator:
             ),
         )
 
+        self._usage_history.append(
+            self._extract_usage(response)
+        )
+
         answer = (response.text or "").strip()
 
         if not answer:
@@ -104,3 +153,50 @@ class GeminiTextGenerator:
             )
 
         return answer
+
+    @staticmethod
+    def _extract_usage(response: object) -> GenerationUsage:
+        usage = getattr(
+            response,
+            "usage_metadata",
+            None,
+        )
+
+        if usage is None:
+            return GenerationUsage()
+
+        input_tokens = int(
+            getattr(
+                usage,
+                "prompt_token_count",
+                0,
+            )
+            or 0
+        )
+        output_tokens = int(
+            getattr(
+                usage,
+                "candidates_token_count",
+                None,
+            )
+            or getattr(
+                usage,
+                "response_token_count",
+                0,
+            )
+            or 0
+        )
+        total_tokens = int(
+            getattr(
+                usage,
+                "total_token_count",
+                0,
+            )
+            or (input_tokens + output_tokens)
+        )
+
+        return GenerationUsage(
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            total_tokens=total_tokens,
+        )

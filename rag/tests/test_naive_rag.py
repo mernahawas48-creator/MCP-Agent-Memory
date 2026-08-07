@@ -186,3 +186,22 @@ def test_invalid_role_is_rejected_by_metadata_schema():
             "What is the policy?",
             role="administrator",
         )
+
+def test_unsupported_numeric_claim_is_replaced_by_safe_answer():
+    generator = StubGenerator(
+        "A severe hold starts at 120 days overdue [1]."
+    )
+
+    response = NaiveRAG(
+        embedder=StubEmbedder(),
+        vector_store=StubVectorStore([_result()]),
+        generator=generator,
+    ).answer(
+        "Who can release a severe credit hold?",
+        role="finance_manager",
+    )
+
+    assert response.answer == NO_CONTEXT_ANSWER
+    assert response.verification is not None
+    assert not response.verification.passed
+

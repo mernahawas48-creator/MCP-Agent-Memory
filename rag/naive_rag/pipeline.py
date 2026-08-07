@@ -11,8 +11,9 @@ from rag.naive_rag.generator import (
     GeminiTextGenerator,
     TextGenerator,
 )
-from rag.vector_store.qdrant_store import (
-    QdrantVectorStore,
+from rag.verification.verifier import (
+    SelfRAGVerifier,
+    VerificationSummary,
 )
 
 
@@ -37,30 +38,41 @@ class RAGSource:
 
 @dataclass(frozen=True, slots=True)
 class RAGAnswer:
-    """Answer and retrieval evidence returned to the caller."""
+    """Answer, retrieval evidence, and verification result."""
 
     query: str
     answer: str
     sources: tuple[RAGSource, ...]
     retrieved_count: int
     model_name: str
+    verification: VerificationSummary | None = None
 
 
 class NaiveRAG:
-    """Retrieve once from Qdrant, then make one grounded LLM call."""
+    """Retrieve once from Qdrant, verify, then make one grounded LLM call."""
 
     def __init__(
         self,
         embedder: Any | None = None,
         vector_store: Any | None = None,
         generator: TextGenerator | None = None,
+        verifier: SelfRAGVerifier | None = None,
     ):
         self.embedder = embedder or ChunkEmbedder()
-        self.vector_store = (
-            vector_store or QdrantVectorStore()
-        )
+
+        if vector_store is None:
+            # Lazy import keeps unit tests independent from qdrant-client.
+            from rag.vector_store.qdrant_store import (
+                QdrantVectorStore,
+            )
+            vector_store = QdrantVectorStore()
+
+        self.vector_store = vector_store
         self.generator = (
             generator or GeminiTextGenerator()
+        )
+        self.verifier = (
+            verifier or SelfRAGVerifier()
         )
 
     def answer(
@@ -75,7 +87,7 @@ class NaiveRAG:
         doc_ids: Sequence[str] | None = None,
         section_ids: Sequence[str] | None = None,
     ) -> RAGAnswer:
-        """Answer one question using authorized retrieved chunks."""
+        """Answer one question using authorized and verified chunks."""
 
         normalized_query = query.strip()
 
@@ -129,6 +141,32 @@ class NaiveRAG:
                 sources=(),
                 retrieved_count=0,
                 model_name=self._model_name(),
+                verification=VerificationSummary(
+                    retrieval_relevant=False,
+                    answer_supported=True,
+                    citations_valid=True,
+                    reason="No authorized evidence was retrieved.",
+                ),
+            )
+
+        relevance = self.verifier.check_relevance(
+            normalized_query,
+            results,
+        )
+
+        if not relevance.passed:
+            return RAGAnswer(
+                query=normalized_query,
+                answer=NO_CONTEXT_ANSWER,
+                sources=sources,
+                retrieved_count=len(results),
+                model_name=self._model_name(),
+                verification=VerificationSummary(
+                    retrieval_relevant=False,
+                    answer_supported=True,
+                    citations_valid=True,
+                    reason=relevance.reason,
+                ),
             )
 
         prompt = self._build_prompt(
@@ -144,12 +182,26 @@ class NaiveRAG:
                 "The text generator returned an empty answer."
             )
 
+        support = self.verifier.check_support(
+            answer,
+            results,
+        )
+
+        verification = self.verifier.summarize(
+            relevance,
+            support,
+        )
+
+        if not support.passed:
+            answer = NO_CONTEXT_ANSWER
+
         return RAGAnswer(
             query=normalized_query,
             answer=answer,
             sources=sources,
             retrieved_count=len(results),
             model_name=self._model_name(),
+            verification=verification,
         )
 
     def _model_name(self) -> str:

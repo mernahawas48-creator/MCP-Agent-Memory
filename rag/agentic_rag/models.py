@@ -63,3 +63,5 @@ class AgenticRAGAnswer:
     final_retrieval_query: str
     model_name: str
     trace: tuple[AgentTraceStep, ...]
+    verification_passed: bool = True
+    verification_reason: str = ""
