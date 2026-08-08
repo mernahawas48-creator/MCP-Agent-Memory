@@ -1,13 +1,27 @@
 from typing import Any
 
 from .base import ContextStrategy
+from rag.naive_rag.generator import GeminiTextGenerator, TextGenerator
 
 
 class RecursiveSummarization(ContextStrategy):
-    """Replace older messages with a compact summary."""
+    """Replace older messages with a model-generated compact summary.
 
-    def __init__(self, keep_last_messages: int = 5):
+    Needs a real TextGenerator (defaults to GeminiTextGenerator, which
+    reads GEMINI_API_KEY from .env). Unlike the previous implementation,
+    this actually asks a model to compress old_messages -- it can lose
+    detail and it spends real output tokens, which is the whole point
+    of the strategy and the tradeoff the comparison table needs to show
+    honestly.
+    """
+
+    def init(
+        self,
+        keep_last_messages: int = 5,
+        generator: TextGenerator | None = None,
+    ):
         self.keep_last_messages = keep_last_messages
+        self.generator = generator or GeminiTextGenerator()
 
     def apply(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if len(messages) <= self.keep_last_messages:
@@ -16,18 +30,25 @@ class RecursiveSummarization(ContextStrategy):
         old_messages = messages[:-self.keep_last_messages]
         recent_messages = messages[-self.keep_last_messages:]
 
-        summary_parts = []
+        transcript = "\n".join(
+            f"{m.get('role', 'unknown')}: {m.get('content', '')}"
+            for m in old_messages
+        )
 
-        for message in old_messages:
-            role = message.get("role", "unknown")
-            content = str(message.get("content", ""))
-            summary_parts.append(f"{role}: {content}")
+        prompt = (
+            "Summarize the following conversation turns into a short "
+            "paragraph. Preserve every operational detail: customer "
+            "commitments, disputes, discounts, credit holds, and "
+            "shipment/invoice facts. Drop only small talk and routine "
+            "status chatter.\n\n"
+            f"{transcript}"
+        )
 
-        summary = " | ".join(summary_parts)
+        summary_text = self.generator.generate(prompt)
 
         summary_message = {
             "role": "system",
-            "content": f"Summary of older context: {summary}",
+            "content": f"Summary of older context: {summary_text}",
         }
 
         return [summary_message] + recent_messages
