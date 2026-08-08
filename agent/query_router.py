@@ -1,101 +1,67 @@
+"""Deterministic routing for Swiftrail agent requests."""
+
+from __future__ import annotations
+
+import re
+
+
+SECTION_ID_PATTERN = re.compile(r"\b[A-Z]{2,5}-\d+(?:\.\d+)?\b", re.IGNORECASE)
+
+
 class QueryRouter:
-    """
-    Decide where the Swiftrail agent should get information from.
-    """
+    """Decide whether a request needs RAG, memory, or an MCP tool path."""
 
+    def route(self, query: str) -> str:
+        normalized = query.strip().lower()
 
-    def route(self, query: str):
-
-        query = query.lower()
-
-
-
-        # -------------------------
-        # Company knowledge
-        # -------------------------
-
-        if (
-            "policy" in query
-            or "manual" in query
-            or "procedure" in query
-            or "rule" in query
+        # Company knowledge: exact policy identifiers and policy/authority questions.
+        if SECTION_ID_PATTERN.search(query) or any(
+            term in normalized
+            for term in (
+                "policy",
+                "manual",
+                "procedure",
+                "rule",
+                "guideline",
+                "authority",
+                "who can release",
+                "who may release",
+                "who must approve",
+            )
         ):
             return "rag"
 
-
-
-        # -------------------------
-        # Previous conversations
-        # -------------------------
-
-        if (
-            "remember" in query
-            or "previous" in query
-            or "last time" in query
-            or "history" in query
+        # Cross-session recall from episodic / semantic memory.
+        if any(
+            term in normalized
+            for term in (
+                "remember",
+                "previous",
+                "last time",
+                "history",
+                "before",
+                "earlier session",
+            )
         ):
             return "memory"
 
-
-
-        # -------------------------
-        # Shipment operations
-        # -------------------------
-
-        if (
-            "shipment" in query
-            or "container" in query
-            or "tracking" in query
-            or "delivery" in query
-            or "package" in query
+        # Existing MCP operational paths. Names match AgentLoop.call_mcp_tool.
+        if any(
+            term in normalized
+            for term in ("shipment", "container", "tracking", "delivery", "package")
         ):
-            return "shipment_tool"
+            return "shipment"
 
-
-
-        # -------------------------
-        # Invoice / Payment
-        # -------------------------
-
-        if (
-            "invoice" in query
-            or "bill" in query
-            or "payment" in query
-            or "amount due" in query
+        if any(
+            term in normalized
+            for term in ("invoice", "bill", "payment", "amount due")
         ):
-            return "invoice_tool"
+            return "invoice"
 
+        if any(term in normalized for term in ("credit", "limit", "hold", "blocked")):
+            return "credit"
 
-
-        # -------------------------
-        # Credit management
-        # -------------------------
-
-        if (
-            "credit" in query
-            or "limit" in query
-            or "hold" in query
-            or "blocked" in query
-        ):
-            return "credit_tool"
-
-
-
-        # -------------------------
-        # Customer information
-        # -------------------------
-
-        if (
-            "customer" in query
-            or "client" in query
-            or "account" in query
-        ):
-            return "customer_tool"
-
-
-
-        # -------------------------
-        # Default
-        # -------------------------
+        if any(term in normalized for term in ("customer", "client", "account")):
+            return "customer"
 
         return "context"

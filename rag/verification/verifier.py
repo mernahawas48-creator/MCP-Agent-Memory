@@ -66,7 +66,7 @@ class SelfRAGVerifier:
       coverage;
     - answer support is checked sentence by sentence against the cited
       evidence;
-    - numeric claims must occur in the cited evidence;
+    - numeric claims must occur in the cited evidence or be scenario values explicitly supplied by the user;
     - every factual sentence must contain valid numbered citations.
 
     A failure has a visible consequence in the RAG pipelines: generation is
@@ -160,8 +160,14 @@ class SelfRAGVerifier:
         self,
         answer: str,
         results: Sequence[Any],
+        *,
+        query: str | None = None,
     ) -> VerificationCheck:
-        """Verify generated factual sentences against their cited chunks."""
+        """Verify generated factual sentences against their cited chunks.
+
+        Numeric values explicitly supplied in the user's query are treated
+        as scenario inputs, not as facts that the knowledge base must repeat.
+        """
 
         normalized_answer = answer.strip()
         if not normalized_answer:
@@ -259,7 +265,12 @@ class SelfRAGVerifier:
                 value.lower()
                 for value in NUMBER_PATTERN.findall(evidence_text)
             }
-            missing_numbers = claim_numbers.difference(evidence_numbers)
+            query_numbers = {
+                value.lower()
+                for value in NUMBER_PATTERN.findall(query or "")
+            }
+            allowed_numbers = evidence_numbers.union(query_numbers)
+            missing_numbers = claim_numbers.difference(allowed_numbers)
 
             if missing_numbers:
                 return VerificationCheck(

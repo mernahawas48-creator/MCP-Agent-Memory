@@ -139,3 +139,69 @@ Fixed test inputs, matching `db/seed.sql`:
 Set `ANTHROPIC_API_KEY` in the environment before running the demo to get a
 real sampling completion in Step 10 instead of the offline stub text shown
 above.
+
+---
+
+# RAG and Self-RAG demo evidence
+
+The following entries come from the fixed architecture evaluation recorded in
+`retrieval_eval/results/architecture_comparison.md` using
+`gemini-3.5-flash-lite`.
+
+## Same question through all three required architectures
+
+Question:
+
+```text
+Who can release a severe credit hold, and what is required before the release is committed?
+```
+
+Authenticated role: `finance_manager`
+
+```text
+Naive RAG
+  result: PASS
+  sources: CH-3, CH-1, CH-2
+  answer: Only an authenticated finance manager may release an active severe
+          credit hold. Explicit human confirmation and an authorization note
+          are required before the release is committed.
+
+Hybrid RAG
+  result: PASS
+  sources: CH-3, CH-1, CH-2
+  answer: Only an authenticated finance manager may release an active severe
+          hold. Explicit human confirmation and an authorization note are
+          required before the write is committed.
+
+Agentic RAG
+  result: PASS
+  retrieval attempts: 1
+  sources: CH-3, CH-1, CH-2
+  answer: Only an authenticated finance manager may release an active severe
+          credit hold. Explicit human confirmation and an authorization note
+          are required before the release is committed.
+```
+
+## Self-RAG verification: pass
+
+For the severe-hold question above, the retrieved CH-3 evidence passed the
+post-retrieval relevance check and the cited generated answer passed the
+post-generation support check. The answer was therefore returned to the user.
+
+## Self-RAG verification: caught unsupported retrieval
+
+Question:
+
+```text
+What is Swiftrail's overnight warehouse storage fee per pallet?
+```
+
+The corpus does not contain that fee. The verifier rejected the retrieved
+content as insufficient/irrelevant, so the pipelines returned a safe
+abstention instead of inventing a number:
+
+```text
+I could not find enough authorized information in the Swiftrail knowledge base to answer this question.
+```
+
+This demonstrates the required visible consequence when verification fails.

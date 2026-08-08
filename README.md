@@ -77,112 +77,260 @@ rather than staying authoritative forever.
 
 See `memory/README.md` for exactly where each concern lives in the code.
 
-## RAG Architecture Evaluation
 
-Three RAG architectures were evaluated on the same fixed set of 10
-Swiftrail domain questions using `gemini-3.5-flash-lite`.
+## MCP Server
 
-The evaluation set included:
+The operational layer is implemented with FastMCP and MySQL.
 
-- semantic policy questions,
-- exact policy section identifiers,
-- multi-part questions requiring evidence from multiple sections,
-- an authorization-sensitive query,
-- and an unsupported query requiring safe abstention.
+| MCP Concern | Implementation |
+|---|---|
+| Capability negotiation | The client reads the server's declared capabilities and gates protocol operations on them |
+| Notifications | Authentication can change the exposed tool set and triggers `tools/list_changed` |
+| Elicitation | Above-authority discounts and severe credit-hold releases require explicit human input |
+| Sampling | `run_portfolio_risk_sweep` can request a narrative summary from the connected client model |
+| Resources | Credit/discount authority policy is exposed as an MCP resource |
+| Prompts | Parameterized rate-exception justification prompt |
+| Transport | stdio for local development and Streamable HTTP for remote execution |
+| Progress tracking | Portfolio risk sweep reports progress while customers are processed |
+| Defensive tools | Strict Pydantic schemas, server-side validation, role/state checks, safe failures, and re-authorization before writes |
 
-The comparison measured answer accuracy, Gemini token usage,
-end-to-end latency, retrieval attempts, and safe abstention behavior.
+Main tools:
+
+- `authenticate`
+- `search_customer`
+- `get_shipment_status`
+- `list_customer_invoices`
+- `approve_rate_exception`
+- `release_credit_hold`
+- `run_portfolio_risk_sweep`
+- `list_portfolio_credit_exposure` for authorized finance-manager sessions
+
+The MySQL schema and fixed seed data are under `db/`.
+
+## Context Management
+
+Four context strategies are implemented under `context_eval/strategies/`:
+
+| Strategy | Purpose |
+|---|---|
+| Sliding Window | Keep the most recent messages |
+| Recursive Summarization | Compress older context into a summary |
+| Tool Output Masking | Mask older tool outputs while preserving the conversation |
+| Zone-Based Pruning | Preserve system/important zones and recent context |
+
+The current live `AgentLoop` uses Sliding Window. The other strategies remain independently testable.
+
+## Agent Integration
+
+`agent/agent_loop.py` routes requests between the selected RAG path, verified memory recall, and the existing operational path.
+
+- policy, authority, guideline, and exact section-ID questions -> **Hybrid RAG**
+- cross-session recall questions -> **verified episodic/semantic memory**
+- shipment, invoice, customer, and credit operations -> **MCP operational path**
+- short-term overflow -> **Promote/Drop routing into episodic memory**
+
+The real MCP protocol lifecycle and tool execution remain in `agent/client.py`; the agent loop does not duplicate the server or database.
+
+
+## RAG System
+
+### Knowledge Corpus and Ingestion
+
+The corpus contains six Swiftrail policy/reference documents covering credit holds, rate exceptions, portfolio risk, invoice collection, employee access, and shipment pricing. These documents contain 22 policy sections used as retrieval units.
+
+```text
+Documents
+  -> validated loading
+  -> section-aware chunking
+  -> metadata validation
+  -> embeddings
+  -> Qdrant indexing
+```
+
+| Component | Configuration |
+|---|---|
+| Chunking | Section-aware, max 1000 characters, 120-character overlap |
+| Embeddings | `BAAI/bge-small-en-v1.5` with FastEmbed |
+| Vector size | 384 |
+| Vector database | Qdrant |
+| Similarity | Cosine |
+| ANN index | HNSW |
+| Metadata filtering | Role, status, document, and section metadata applied during retrieval |
+
+### Retrieval Architectures
+
+**Naive RAG**  
+Dense query embedding -> Qdrant retrieval -> grounded generation.
+
+**Hybrid RAG**  
+Dense vector retrieval + BM25 lexical retrieval -> Reciprocal Rank Fusion (RRF). Exact identifiers such as `RE-2` are handled explicitly.
+
+**Agentic RAG**  
+Plan -> retrieve -> grade evidence -> rewrite/retrieve again when evidence is incomplete -> accumulate evidence -> grounded generation. The controller is capped at two retrieval attempts.
+
+### Self-RAG Verification
+
+Both RAG and memory recall use explicit verification:
+
+1. check retrieved evidence for relevance;
+2. generate only from the retrieved evidence;
+3. validate citations and factual support;
+4. check numeric claims against evidence or scenario values;
+5. return a safe abstention when verification fails.
+
+This prevents unsupported or unauthorized information from being returned as a confident answer.
 
 ### Retrieval-Level Evaluation
 
-Before comparing the complete RAG architectures, dense and hybrid
-retrieval were evaluated independently on 28 fixed retrieval cases.
+Dense and hybrid retrieval were evaluated on 28 fixed retrieval cases.
 
 | Retrieval Method | Hit@1 | MRR@5 | Access Safety@5 |
 |---|---:|---:|---:|
 | Dense Retrieval | 92.31% | 94.36% | 100% |
 | Hybrid Retrieval | 100% | 100% | 100% |
 
-Hybrid retrieval achieved perfect Hit@1 and MRR@5 on the evaluation
-set while preserving full role-aware access safety.
-
 ### End-to-End Architecture Comparison
 
-| Architecture | Correct / Total | Accuracy | Avg. Input Tokens / Query | Avg. Output Tokens / Query | Avg. Total Tokens / Query | Avg. Latency / Query | Avg. Retrieval Attempts |
+Naive, Hybrid, and Agentic RAG were evaluated on the same fixed 10 Swiftrail questions using `gemini-3.5-flash-lite`.
+
+| Architecture | Correct / Total | Accuracy | Avg. Input Tokens | Avg. Output Tokens | Avg. Total Tokens | Avg. Latency | Avg. Retrieval Attempts |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| Naive RAG | 7/10 | 70.0% | 285.8 | 37.3 | 323.1 | 0.629s | 1.00 |
-| Hybrid RAG | 9/10 | 90.0% | 261.3 | 40.7 | 302.0 | 0.634s | 1.00 |
-| Agentic RAG | 8/10 | 80.0% | 478.4 | 32.6 | 511.0 | 0.652s | 1.40 |
+| Naive RAG | 7/10 | 70.0% | 285.8 | 41.0 | 326.8 | 0.610s | 1.00 |
+| Hybrid RAG | 9/10 | 90.0% | 261.3 | 40.0 | 301.3 | 0.501s | 1.00 |
+| Agentic RAG | 9/10 | 90.0% | 640.9 | 41.9 | 682.8 | 0.546s | 1.40 |
 
-### Result Analysis
-
-Naive RAG performed well on straightforward semantic questions but
-was less reliable for exact policy identifiers and multi-section
-questions. For example, it failed the `RE-2` exact-section case because
-dense retrieval returned related sections instead of the requested
-section.
-
-Hybrid RAG produced the strongest overall result. It correctly answered
-9 of the 10 evaluation cases and successfully handled all exact policy
-identifier queries. Combining dense semantic retrieval with BM25 lexical
-retrieval improved exact-section matching without introducing additional
-retrieval rounds.
-
-Agentic RAG achieved 80% accuracy. Although it could rewrite queries and
-perform additional retrieval attempts, the extra reasoning did not
-improve the final accuracy over Hybrid RAG on this benchmark. It also
-used substantially more tokens per query and averaged 1.40 retrieval
-attempts.
-
-All architectures correctly handled the authorization-sensitive and
-unsupported-information cases by returning safe abstentions instead of
-fabricating unauthorized or unavailable information.
+The fixed set covers semantic questions, exact policy identifiers, multi-section questions, an authorization-sensitive case, and an unsupported-information case.
 
 ### Selected Architecture
 
-**Hybrid RAG is selected as the final retrieval architecture for
-Swiftrail.**
+**Hybrid RAG is the final retrieval architecture used by the live agent.**
 
-The decision is based on measured evaluation results rather than
-architectural complexity alone. Hybrid RAG achieved:
+Hybrid and Agentic RAG both reached **90% accuracy**, but Hybrid used fewer tokens, lower average latency, and one retrieval attempt per query. This matches Swiftrail's common mix of semantic policy questions and exact policy identifiers without paying the extra cost of iterative retrieval on every request.
 
-- the highest answer accuracy: **90%**,
-- the lowest average total token usage: **302 tokens/query**,
-- latency comparable to Naive RAG,
-- one retrieval attempt per query on average,
-- perfect exact-section retrieval in the tested identifier cases,
-- and correct safe-abstention behavior.
+Agentic RAG is retained for complex multi-part cases. In the discount-and-severe-hold case, the first retrieval missed `CH-3`; Agentic RAG detected the missing policy facet, rewrote the query, performed a second retrieval, accumulated `RE-2`, `RE-4`, and `CH-3`, and answered successfully. Hybrid RAG did not solve that case.
 
-Agentic RAG remains valuable as an experimental architecture for queries
-that may require iterative retrieval. However, on the current Swiftrail
-evaluation set, its additional retrieval and reasoning cost did not
-produce better accuracy than Hybrid RAG.
+Detailed results:
 
-### Self-RAG Verification
+```text
+retrieval_eval/results/architecture_comparison.json
+retrieval_eval/results/architecture_comparison.md
+```
 
-The RAG pipelines include an explicit verification layer after retrieval
-and after generation.
+---
 
-The verification process checks:
+## Project Structure
 
-1. whether retrieved evidence is relevant to the user's query,
-2. whether generated claims are supported by retrieved evidence,
-3. whether citations reference valid retrieved chunks,
-4. whether numeric claims are grounded in the evidence.
+```text
+agent/              Agent loop, routing, MCP client, sessions
+context_eval/       Context-management strategies and tests
+db/                 MySQL schema, seed data, ERD
+demo/               Captured MCP and RAG/Self-RAG demo evidence
+mcp_server/         FastMCP server, schemas, tools, resources, prompts
+memory/             Short-term, episodic, semantic memory and verified recall
+rag/                Corpus, ingestion, vector store, RAG architectures, verification
+retrieval_eval/     Fixed end-to-end architecture evaluation
+```
 
-If verification fails, the pipeline does not expose an unsupported
-answer. It returns a safe abstention instead.
+## Setup
 
-This behavior was also exercised by the evaluation cases for unauthorized
-and unsupported information.
+### Install dependencies
 
-### Evaluation Limitations
+```powershell
+pip install -r mcp_server\requirements.txt
+pip install -r agent\requirements.txt
+pip install -r rag\embeddings\requirements.txt
+pip install -r rag\vector_store\requirements.txt
+pip install pytest
+```
 
-The architecture comparison uses a small fixed benchmark of 10
-domain-specific questions. Therefore, the measured percentages should be
-interpreted as results for the current Swiftrail corpus and test set,
-rather than as general performance guarantees.
+### Configure MySQL
 
-Latency is also affected by external model-service variability. The
-comparison therefore emphasizes the combined evidence from accuracy,
-retrieval behavior, token usage, and latency rather than latency alone.
+Create a local database named `swiftrail_db`, then run:
+
+```text
+db/schema.sql
+db/seed.sql
+```
+
+Copy `mcp_server/.env.example` to `mcp_server/.env` and set the local database credentials.
+
+### Configure Gemini
+
+Create a root `.env` file:
+
+```env
+GEMINI_API_KEY=your_key
+GEMINI_MODEL=gemini-3.5-flash-lite
+```
+
+Do not commit real credentials.
+
+### Start Qdrant and ingest the corpus
+
+```powershell
+docker compose -f rag\vector_store\docker-compose.yml up -d
+python -m rag.ingestion.pipeline --recreate
+```
+
+## Running
+
+MCP server with stdio:
+
+```powershell
+python mcp_server\server.py
+```
+
+Streamable HTTP:
+
+```powershell
+python mcp_server\server.py --http
+```
+
+MCP demo:
+
+```powershell
+python agent\demo.py --transport stdio
+```
+
+Memory demo:
+
+```powershell
+python -m memory.demo_memory
+```
+
+RAG examples:
+
+```powershell
+python -m rag.naive_rag.cli --query "Who can release a severe credit hold?" --role finance_manager
+python -m rag.hybrid_rag.cli --query "RE-2" --role finance_manager
+python -m rag.agentic_rag.cli --query "An 18 percent discount is requested for a customer with a severe credit hold. Who must approve the discount, who may release the hold, and does discount approval release the hold?" --role finance_manager --top-k 5 --max-attempts 2
+```
+
+Architecture evaluation:
+
+```powershell
+python -m retrieval_eval.evaluate_architectures
+```
+
+Do not edit `retrieval_eval/questions.json` between architecture runs.
+
+## Tests
+
+```powershell
+python -m pytest memory -q
+python -m pytest context_eval -q
+python -m pytest rag\tests -q
+python -m pytest retrieval_eval\test_evaluate_architectures.py -q
+python -m pytest agent -q
+```
+
+Integration tests that depend on MySQL or Qdrant require those services to be running.
+
+## Demo Evidence
+
+The captured protocol demo and RAG/Self-RAG evidence are documented in:
+
+```text
+demo/demo_transcript.md
+```
+

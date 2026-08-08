@@ -1,17 +1,12 @@
 """Semantic memory: versioned, stable facts derived from episodic memory.
 
-Nothing outside ConsolidationLayer is allowed to call `upsert_fact`.
+Nothing outside ConsolidationLayer is allowed to call ``upsert_fact``.
 Facts are never overwritten silently:
-
     - Updates create a NEW row with an incremented version.
-    - The previous active row is marked "superseded" and points at the
-      row that replaced it (superseded_by), so the old value is never
-      lost.
-    - Facts carry an expires_at; a stale fact that nothing has refreshed
-      is marked "expired" rather than deleted.
-    - A genuine conflict (two episodes implying different values for
-      the same fact) is resolved by superseding, with both the old and
-      new values, and the reason, visible in fact_history().
+    - The previous active row is marked ``superseded`` and points at the
+      row that replaced it, so the old value is never lost.
+    - Facts carry an ``expires_at``; stale facts are marked ``expired``.
+    - Conflicts create a new version and keep the full fact history.
 """
 
 from __future__ import annotations
@@ -26,7 +21,6 @@ DEFAULT_DB_PATH = os.environ.get(
     "MEMORY_DB_PATH",
     os.path.join(os.path.dirname(__file__), "memory_store.db"),
 )
-
 DEFAULT_TTL_DAYS = 90
 
 
@@ -37,7 +31,7 @@ class SemanticFact:
     fact_key: str
     fact_value: str
     version: int
-    status: str  # "active" | "superseded" | "expired"
+    status: str
     source_episode_id: int | None
     conflict_reason: str | None
     superseded_by: int | None
@@ -91,6 +85,22 @@ class SemanticMemory:
             ).fetchone()
         return self._row_to_fact(row) if row else None
 
+    def get_active_facts(self, customer_id: int) -> list[SemanticFact]:
+        """Return all currently active facts for one customer.
+
+        Verified memory recall needs the active semantic set before it can
+        perform the explicit relevance check required by the project.
+        """
+
+        self.expire_stale_facts()
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM semantic_facts WHERE customer_id = ? "
+                "AND status = 'active' ORDER BY fact_key, version DESC",
+                (customer_id,),
+            ).fetchall()
+        return [self._row_to_fact(row) for row in rows]
+
     def fact_history(self, customer_id: int, fact_key: str) -> list[SemanticFact]:
         with self._connect() as conn:
             rows = conn.execute(
@@ -108,30 +118,24 @@ class SemanticMemory:
         source_episode_id: int | None = None,
         ttl_days: int = DEFAULT_TTL_DAYS,
     ) -> SemanticFact:
-        """Called only by ConsolidationLayer.
-
-        If there's no active fact for (customer_id, fact_key), inserts
-        version 1. If there IS one and the new value differs, this is a
-        conflict: the old row is superseded (not deleted) and a new
-        versioned row becomes active, with conflict_reason recorded. If
-        the value is unchanged, refreshes expires_at (the fact was
-        reaffirmed, not stale) without bumping the version.
-        """
+        """Insert, reaffirm, or version a semantic fact."""
 
         now = datetime.now(timezone.utc)
         expires_at = (now + timedelta(days=ttl_days)).isoformat()
-
         current = self.get_active_fact(customer_id, fact_key)
 
         if current is None:
             return self._insert(
-                customer_id, fact_key, fact_value, version=1,
+                customer_id,
+                fact_key,
+                fact_value,
+                version=1,
                 source_episode_id=source_episode_id,
-                conflict_reason=None, expires_at=expires_at,
+                conflict_reason=None,
+                expires_at=expires_at,
             )
 
         if current.fact_value == fact_value:
-            # Same fact reaffirmed by a newer episode: just extend TTL.
             with self._connect() as conn:
                 conn.execute(
                     "UPDATE semantic_facts SET expires_at = ? WHERE id = ?",
@@ -140,17 +144,15 @@ class SemanticMemory:
             current.expires_at = expires_at
             return current
 
-        # Conflict: two episodes imply different values for the same
-        # fact. Resolve by superseding -- old value kept, versioned,
-        # dated, with the reason recorded.
         conflict_reason = (
             f"Superseded version {current.version} "
             f"({current.fact_value!r} -> {fact_value!r}) "
             f"based on episode {source_episode_id}."
         )
-
         new_fact = self._insert(
-            customer_id, fact_key, fact_value,
+            customer_id,
+            fact_key,
+            fact_value,
             version=current.version + 1,
             source_episode_id=source_episode_id,
             conflict_reason=conflict_reason,
@@ -163,36 +165,40 @@ class SemanticMemory:
                 "superseded_by = ? WHERE id = ?",
                 (new_fact.id, current.id),
             )
-
         return new_fact
 
-    def expire_stale_facts(self, as_of: datetime | None = None) -> list[SemanticFact]:
-        """Mark any active fact past its expires_at as 'expired'
-        instead of deleting it. Returns the facts that were expired."""
+    def expire_stale_facts(
+        self,
+        as_of: datetime | None = None,
+    ) -> list[SemanticFact]:
+        """Mark active facts past ``expires_at`` as expired, not deleted."""
 
         as_of = as_of or datetime.now(timezone.utc)
         with self._connect() as conn:
             rows = conn.execute(
                 "SELECT * FROM semantic_facts WHERE status = 'active'"
             ).fetchall()
-
-            expired = []
+            expired: list[SemanticFact] = []
             for row in rows:
                 fact = self._row_to_fact(row)
                 if datetime.fromisoformat(fact.expires_at) < as_of:
                     conn.execute(
-                        "UPDATE semantic_facts SET status = 'expired' "
-                        "WHERE id = ?",
+                        "UPDATE semantic_facts SET status = 'expired' WHERE id = ?",
                         (fact.id,),
                     )
                     fact.status = "expired"
                     expired.append(fact)
-
         return expired
 
     def _insert(
-        self, customer_id, fact_key, fact_value, version,
-        source_episode_id, conflict_reason, expires_at,
+        self,
+        customer_id: int,
+        fact_key: str,
+        fact_value: str,
+        version: int,
+        source_episode_id: int | None,
+        conflict_reason: str | None,
+        expires_at: str,
     ) -> SemanticFact:
         created_at = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
@@ -205,29 +211,44 @@ class SemanticMemory:
                 VALUES (?, ?, ?, ?, 'active', ?, ?, NULL, ?, ?)
                 """,
                 (
-                    customer_id, fact_key, fact_value, version,
-                    source_episode_id, conflict_reason, created_at,
+                    customer_id,
+                    fact_key,
+                    fact_value,
+                    version,
+                    source_episode_id,
+                    conflict_reason,
+                    created_at,
                     expires_at,
                 ),
             )
             fact_id = cur.lastrowid
 
         return SemanticFact(
-            id=fact_id, customer_id=customer_id, fact_key=fact_key,
-            fact_value=fact_value, version=version, status="active",
+            id=fact_id,
+            customer_id=customer_id,
+            fact_key=fact_key,
+            fact_value=fact_value,
+            version=version,
+            status="active",
             source_episode_id=source_episode_id,
-            conflict_reason=conflict_reason, superseded_by=None,
-            created_at=created_at, expires_at=expires_at,
+            conflict_reason=conflict_reason,
+            superseded_by=None,
+            created_at=created_at,
+            expires_at=expires_at,
         )
 
     @staticmethod
     def _row_to_fact(row: sqlite3.Row) -> SemanticFact:
         return SemanticFact(
-            id=row["id"], customer_id=row["customer_id"],
-            fact_key=row["fact_key"], fact_value=row["fact_value"],
-            version=row["version"], status=row["status"],
+            id=row["id"],
+            customer_id=row["customer_id"],
+            fact_key=row["fact_key"],
+            fact_value=row["fact_value"],
+            version=row["version"],
+            status=row["status"],
             source_episode_id=row["source_episode_id"],
             conflict_reason=row["conflict_reason"],
             superseded_by=row["superseded_by"],
-            created_at=row["created_at"], expires_at=row["expires_at"],
+            created_at=row["created_at"],
+            expires_at=row["expires_at"],
         )
